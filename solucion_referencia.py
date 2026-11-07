@@ -120,30 +120,45 @@ def calcular_orden_convergencia_1c(pasos_h, errores):
 
 def analizar_inestabilidad_1d(t_ref, y_ref, t0, tf, y0, timestamp):
     # Pasos grandes que dividen exactamente a 60 (ya no se duplican exactamente)
-    pasos_h_grandes = [0.8, 1.5, 2.0, 3.0, 4.0, 6.0]
-    colores = ['purple', 'brown', 'magenta', 'darkred', 'green', 'teal']
+    # Pasos que dividen exactamente a 60; los intermedios (1.0, 1.2, 1.25)
+    # sirven para ubicar el umbral de inestabilidad entre 0.8 y 1.5
+    pasos_h_grandes = [0.8, 1.0, 1.2, 1.25, 1.5, 2.0, 3.0, 4.0, 6.0]
+    cmap = plt.get_cmap('viridis')
+    colores = [cmap(i / (len(pasos_h_grandes) - 1)) for i in range(len(pasos_h_grandes))]
+    LIMITE_DIVERGENCIA = 1e3  # |T| mayor a esto se considera solución divergente
 
     print("\n--- Resultados Punto 1.d (Análisis de Inestabilidad) ---")
-    print(f"{'Paso h':<10} | {'Error Máximo en T':<25}")
-    print("-" * 40)
+    print(f"{'Paso h':<10} | {'Error Máximo en T':<25} | Estado")
+    print("-" * 60)
 
     plt.figure(figsize=(10, 6))
     # Graficamos la referencia de fondo
     plt.plot(t_ref, y_ref[:, 0], label='Referencia ($h_{ref} = 0.0001$)', color='black', linewidth=2, linestyle='--')
 
     for h, color in zip(pasos_h_grandes, colores):
-        t_test, y_test = resolver_euler(modelo_el_nino, t0, tf, h, y0)
+        # Silenciamos los warnings de overflow: son esperables cuando diverge
+        with np.errstate(all='ignore'):
+            t_test, y_test = resolver_euler(modelo_el_nino, t0, tf, h, y0)
 
-        # Sincronizamos los tiempos
-        T_ref_sincronizada = np.interp(t_test, t_ref, y_ref[:, 0])
-        T_test = y_test[:, 0]
+            # Sincronizamos los tiempos
+            T_ref_sincronizada = np.interp(t_test, t_ref, y_ref[:, 0])
+            T_test = y_test[:, 0]
+            error_maximo = np.max(np.abs(T_test - T_ref_sincronizada))
 
-        error_maximo = np.max(np.abs(T_test - T_ref_sincronizada))
-        print(f"Paso h = {h:<5.2f} | Error máximo en T: {error_maximo:.6e}")
+        diverge = (not np.all(np.isfinite(T_test))) or np.max(np.abs(T_test)) > LIMITE_DIVERGENCIA
+        if diverge:
+            print(f"Paso h = {h:<5.2f} | {'-':<25} | INESTABLE (diverge)")
+            # Graficamos solo los puntos finitos (el eje Y se limita más abajo)
+            T_plot = np.where(np.isfinite(T_test), T_test, np.nan)
+        else:
+            print(f"Paso h = {h:<5.2f} | {error_maximo:<25.6e} | estable")
+            T_plot = T_test
 
-        # Graficamos la solución inestable
-        plt.plot(t_test, y_test[:, 0], label=f'Euler h={h}', color=color, alpha=0.8, linewidth=1.2)
+        plt.plot(t_test, T_plot, label=f'Euler h={h}' + (' (diverge)' if diverge else ''),
+                 color=color, alpha=0.8, linewidth=1.2)
 
+    # Limitamos el eje Y para que las soluciones que explotan no aplasten el gráfico
+    plt.ylim(-2, 8)
     plt.xlabel('Tiempo (meses)', fontsize=11)
     plt.ylabel('Anomalía de Temperatura $T(t)$ [°C]', fontsize=11)
     plt.title('Inciso 1.d: Evidencia de Inestabilidad con Pasos Temporales Grandes', fontsize=12, fontweight='bold')
