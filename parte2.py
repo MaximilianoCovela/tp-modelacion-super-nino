@@ -33,6 +33,16 @@ NOMINALES = {
 }
 OMEGA = 2 * np.pi / PERIODO
 
+# Valores elegidos para el inciso 2.b: equiespaciados dentro de los intervalos
+# del enunciado e incluyendo siempre el valor nominal. Cada entrada tiene la
+# lista de valores y la unidad del parametro para el eje del grafico.
+VALORES_2B = {
+    "A": ([0.25, 0.30, 0.35, 0.40, 0.45, 0.50, 0.55, 0.60], "mes⁻¹"),
+    "BETA": ([0.10, 0.125, 0.15, 0.175, 0.20, 0.225, 0.25, 0.275, 0.30], "u.h. mes⁻¹ °C⁻²"),
+    "GAMMA": ([0.05, 0.075, 0.10, 0.125, 0.15, 0.175, 0.20], "mes⁻¹ u.p.⁻¹"),
+    "SIGMA": ([0.40, 0.50, 0.60, 0.70, 0.80, 0.90, 1.00], "mes⁻¹"),
+}
+
 
 def crear_modelo(p):
     """Devuelve f(t, y) del sistema con los parametros del diccionario p."""
@@ -133,17 +143,86 @@ def inciso_2a(timestamp):
     plt.show()
     plt.close("all")
 
+def inciso_2b_sensibilidad(param_nombre, valores_param, timestamp, unidad=""):
+    """
+    Analiza y grafica cómo cambian SP y ΔtTP al modificar un único parámetro.
+    Recibe el nombre del parámetro (ej. 'A', 'BETA'), una lista de valores a probar,
+    el timestamp para guardar el archivo, y opcionalmente la unidad del parámetro.
+    """
+    resultados_sp = []
+    resultados_dt = []
+
+    # Obtenemos el valor nominal actual para marcarlo en el gráfico
+    valor_nominal = NOMINALES[param_nombre]
+
+    print(f"\n--- Resultados Punto 2.b: variando {param_nombre} (resto nominal) ---")  
+    print(f"{'Valor':>10} | {'SP':>10} | {'ΔtTP (meses)':>15}")
+    print("-" * 43)
+
+    for valor in valores_param:
+        # Copiamos los parámetros nominales y alteramos solo el actual
+        p_actual = NOMINALES.copy()
+        p_actual[param_nombre] = valor
+
+        # Simulamos y calculamos indicadores  
+        t, y = simular(p_actual)
+        ind = indicadores(t, y)
+
+        resultados_sp.append(ind["SP"])
+        resultados_dt.append(ind["dt_TP"])
+
+        print(f"{valor:10.4f} | {ind['SP']:10.4f} | {ind['dt_TP']:15.2f}")
+
+    # --- Generación de Gráficos ---
+    fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(8, 10), sharex=True)
+
+    # Subplot 1: Severidad Estacional (SP) vs Parámetro
+    ax1.plot(valores_param, resultados_sp, marker='o', color='tab:blue', linewidth=2, label='SP')
+    ax1.axvline(valor_nominal, color='tab:red', linestyle='--', label=f'Valor Nominal ({valor_nominal})')
+    ax1.set_ylabel('Severidad Estacional (SP)')
+    ax1.set_title(f'Sensibilidad de SP y ΔtTP respecto al parámetro {param_nombre}', fontweight='bold')
+    ax1.grid(True, linestyle=':', alpha=0.7)
+    ax1.legend()
+
+    # Subplot 2: Desfase (ΔtTP) vs Parámetro
+    ax2.plot(valores_param, resultados_dt, marker='s', color='tab:green', linewidth=2, label='ΔtTP')
+    ax2.axvline(valor_nominal, color='tab:red', linestyle='--', label=f'Valor Nominal ({valor_nominal})')
+    ax2.set_ylabel('Desfase ΔtTP (meses)')
+
+    # Armamos la etiqueta del eje X sumando la unidad si fue provista
+    etiqueta_x = param_nombre
+    if unidad:
+        etiqueta_x += f" [{unidad}]"
+    ax2.set_xlabel(etiqueta_x)
+    ax2.grid(True, linestyle=':', alpha=0.7)
+    ax2.legend()
+
+    # Guardamos la figura usando el mismo esquema del inciso 2a  
+    nombre_archivo = f"grafico_2b_sensibilidad_{param_nombre}_{timestamp}.png"
+    fig.savefig(nombre_archivo, dpi=300, bbox_inches='tight')
+    plt.show()  
+
+    print(f"Gráfico guardado como: {nombre_archivo}")
+
+    return valores_param, resultados_sp, resultados_dt
+
+
+
 
 def main():
     parser = argparse.ArgumentParser(description="TP El Niño - Parte 2")
-    parser.add_argument("incisos", nargs="*", choices=["a", "todos"], default=["todos"],
-                        help="Incisos a ejecutar (ej: python parte2.py a). Por defecto: todos")
+    parser.add_argument("incisos", nargs="*", choices=["a", "b", "todos"], default=["todos"],
+                        help="Incisos a ejecutar (ej: python parte2.py a b). Por defecto: todos")
     args = parser.parse_args()
-    incisos = {"a"} if "todos" in args.incisos else set(args.incisos)
+    incisos = {"a", "b"} if "todos" in args.incisos else set(args.incisos)
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
 
     if "a" in incisos:
         inciso_2a(timestamp)
+
+    if "b" in incisos:
+        for nombre, (valores, unidad) in VALORES_2B.items():
+            inciso_2b_sensibilidad(nombre, valores, timestamp, unidad=unidad)
 
 
 if __name__ == "__main__":
