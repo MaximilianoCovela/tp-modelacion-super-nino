@@ -5,9 +5,11 @@ Uso:
     python parte2.py a b        # varios
 """
 import argparse
+import itertools
 from datetime import datetime
 
 import numpy as np
+import pandas as pd
 import matplotlib.pyplot as plt
 
 from solucion_referencia import resolver_euler
@@ -207,14 +209,94 @@ def inciso_2b_sensibilidad(param_nombre, valores_param, timestamp, unidad=""):
     return valores_param, resultados_sp, resultados_dt
 
 
+# --- Inciso 2.c: busqueda de la combinacion de mayor SP ---------------------
+
+# Grilla: 5 valores equiespaciados por parametro, incluyendo los extremos de
+# los intervalos del enunciado (5**4 = 625 combinaciones).
+GRILLA_2C = {
+    "A": np.linspace(0.25, 0.60, 5),
+    "BETA": np.linspace(0.10, 0.30, 5),
+    "GAMMA": np.linspace(0.05, 0.20, 5),
+    "SIGMA": np.linspace(0.40, 1.00, 5),
+}
+LIMITE_ACOTADA = 1e3     # |T|, |H|, |P| por encima de esto: solucion no acotada
+TOL_PERIODICIDAD = 1e-2  # diferencia relativa maxima entre el ultimo ciclo y el anterior
+
+
+def es_acotada(y):
+    return bool(np.all(np.isfinite(y)) and np.max(np.abs(y)) < LIMITE_ACOTADA)
+
+
+def error_periodicidad(t, y):
+    """Diferencia relativa maxima entre el ultimo ciclo (48-60) y el anterior (36-48).
+    Si el regimen ya es anual y repetitivo, ambos ciclos coinciden (error ~ 0)."""
+    paso = int(round(PERIODO / (t[1] - t[0])))
+    ultimo = y[-(paso + 1):]
+    previo = y[-(2 * paso + 1):-paso]
+    escala = np.max(np.abs(ultimo), axis=0) + 1e-12
+    return float(np.max(np.max(np.abs(ultimo - previo), axis=0) / escala))
+
+
+def inciso_2c(timestamp):
+    nombres = list(GRILLA_2C.keys())
+    combinaciones = list(itertools.product(*GRILLA_2C.values()))
+    print(f"\n--- Resultados Punto 2.c: grilla de {len(combinaciones)} combinaciones "
+          f"(h = {H_PARTE2}) ---")
+
+    filas = []
+    for combo in combinaciones:
+        p = NOMINALES.copy()
+        p.update(dict(zip(nombres, combo)))
+        with np.errstate(all="ignore"):
+            t, y = simular(p)
+        fila = dict(zip(nombres, combo))
+        fila["acotada"] = es_acotada(y)
+        if fila["acotada"]:
+            ind = indicadores(t, y)
+            fila.update(SP=ind["SP"], dt_TP=ind["dt_TP"], P_max=ind["P_max"],
+                        P_min=ind["P_min"], P_med=ind["P_med"],
+                        err_per=error_periodicidad(t, y))
+        else:
+            fila.update(SP=np.nan, dt_TP=np.nan, P_max=np.nan, P_min=np.nan,
+                        P_med=np.nan, err_per=np.nan)
+        fila["repetitiva"] = bool(fila["acotada"] and fila["err_per"] < TOL_PERIODICIDAD)
+        filas.append(fila)
+
+    df = pd.DataFrame(filas)
+    df.to_csv(f"resultados_2c_{timestamp}.csv", index=False)
+
+    n_ac = int(df["acotada"].sum())
+    n_ok = int(df["repetitiva"].sum())
+    print(f"Soluciones acotadas: {n_ac}/{len(df)} | acotadas y repetitivas: {n_ok}/{len(df)}")
+
+    validas = df[df["repetitiva"]].sort_values("SP", ascending=False)
+    if validas.empty:
+        print("Ninguna combinación cumple las condiciones.")
+        return None
+
+    print("\nTop 10 combinaciones válidas (ordenadas por SP):")
+    print(validas.head(10)[nombres + ["SP", "dt_TP", "P_max", "P_min", "P_med", "err_per"]]
+          .to_string(index=False, float_format=lambda v: f"{v:.4f}"))
+
+    mejor = validas.iloc[0]
+    print("\nMejor combinación (mayor SP con solución acotada y repetitiva):")
+    for n in nombres:
+        v = mejor[n]
+        rango = GRILLA_2C[n]
+        borde = " (extremo del intervalo)" if np.isclose(v, rango[0]) or np.isclose(v, rango[-1]) else ""
+        print(f"  {n:<6} = {v:.4f}{borde}")
+    print(f"  SP = {mejor['SP']:.4f} | ΔtTP = {mejor['dt_TP']:.2f} meses | "
+          f"Pmax = {mejor['P_max']:.3f} | Pmin = {mejor['P_min']:.3f} | Pmed = {mejor['P_med']:.3f}")
+    print(f"Resultados completos guardados en: resultados_2c_{timestamp}.csv")
+    return {n: float(mejor[n]) for n in nombres}
 
 
 def main():
     parser = argparse.ArgumentParser(description="TP El Niño - Parte 2")
-    parser.add_argument("incisos", nargs="*", choices=["a", "b", "todos"], default=["todos"],
+    parser.add_argument("incisos", nargs="*", choices=["a", "b", "c", "todos"], default=["todos"],
                         help="Incisos a ejecutar (ej: python parte2.py a b). Por defecto: todos")
     args = parser.parse_args()
-    incisos = {"a", "b"} if "todos" in args.incisos else set(args.incisos)
+    incisos = {"a", "b", "c"} if "todos" in args.incisos else set(args.incisos)
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
 
     if "a" in incisos:
@@ -223,6 +305,9 @@ def main():
     if "b" in incisos:
         for nombre, (valores, unidad) in VALORES_2B.items():
             inciso_2b_sensibilidad(nombre, valores, timestamp, unidad=unidad)
+
+    if "c" in incisos:
+        inciso_2c(timestamp)
 
 
 if __name__ == "__main__":
