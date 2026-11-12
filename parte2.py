@@ -291,12 +291,70 @@ def inciso_2c(timestamp):
     return {n: float(mejor[n]) for n in nombres}
 
 
+# --- Inciso 2.d: comparacion entre el caso nominal y el de mayor severidad ---
+
+def inciso_2d(timestamp, mejores=None):
+    """Compara el escenario de mayor SP (inciso 2.c) con el caso nominal.
+    Si ya se corrio el 2.c se le pasa su resultado en `mejores`; si no, se calcula."""
+    if mejores is None:
+        mejores = inciso_2c(timestamp)
+    if mejores is None:
+        print("No hay escenario de mayor severidad para comparar.")
+        return
+
+    escenarios = {
+        "Nominal": NOMINALES.copy(),
+        "Mayor severidad": {**NOMINALES, **mejores},
+    }
+    resultados = {}
+    for nombre, p in escenarios.items():
+        t, y = simular(p)
+        resultados[nombre] = (p, t, y, indicadores(t, y))
+
+    print("\n--- Resultados Punto 2.d: caso nominal vs. mayor severidad (último ciclo) ---")
+    encabezado = f"{'Caso':<16} | {'A':>6} {'β':>6} {'γ':>6} {'σ':>6} | {'SP':>7} {'ΔtTP':>6} | " \
+                 f"{'Pmax':>7} {'Pmin':>7} {'Pmed':>7}"
+    print(encabezado)
+    print("-" * len(encabezado))
+    for nombre, (p, _, _, ind) in resultados.items():
+        print(f"{nombre:<16} | {p['A']:6.3f} {p['BETA']:6.3f} {p['GAMMA']:6.3f} {p['SIGMA']:6.3f} | "
+              f"{ind['SP']:7.4f} {ind['dt_TP']:6.2f} | "
+              f"{ind['P_max']:7.3f} {ind['P_min']:7.3f} {ind['P_med']:7.3f}")
+
+    # Grafico: T, H y P de ambos casos en el ultimo ciclo anual
+    etiquetas = ["T(t) [°C]", "H(t) [u.h.]", "P(t) [u.p.]"]
+    estilos = {"Nominal": ("tab:blue", "-"), "Mayor severidad": ("tab:red", "-")}
+    fig, ejes = plt.subplots(3, 1, figsize=(10, 9), sharex=True)
+    for nombre, (_, t, y, ind) in resultados.items():
+        color, estilo = estilos[nombre]
+        ultimo = t >= INICIO_ULTIMO_CICLO - 1e-9
+        for i, ax in enumerate(ejes):
+            etiqueta = f"{nombre} (SP = {ind['SP']:.3f}, ΔtTP = {ind['dt_TP']:.2f} m)" if i == 0 else None
+            ax.plot(t[ultimo], y[ultimo, i], color=color, linestyle=estilo, linewidth=2, label=etiqueta)
+        ejes[2].axhline(ind["P_med"], color=color, linestyle=":", alpha=0.7)
+    for i, ax in enumerate(ejes):
+        ax.set_ylabel(etiquetas[i])
+        ax.grid(True, linestyle=":", alpha=0.7)
+    ejes[0].legend(loc="best", fontsize=9)
+    ejes[0].set_title("Inciso 2.d: caso nominal vs. escenario de mayor severidad (último ciclo)",
+                      fontweight="bold")
+    ejes[2].set_xlabel("Tiempo (meses)")
+    ejes[2].text(0.01, 0.03, "Líneas punteadas: Pmed de cada caso", transform=ejes[2].transAxes,
+                 fontsize=8, color="gray")
+
+    nombre_archivo = f"grafico_2d_comparacion_{timestamp}.png"
+    fig.savefig(nombre_archivo, dpi=300, bbox_inches="tight")
+    print(f"Gráfico guardado como: {nombre_archivo}")
+    plt.show()
+    plt.close("all")
+
+
 def main():
     parser = argparse.ArgumentParser(description="TP El Niño - Parte 2")
-    parser.add_argument("incisos", nargs="*", choices=["a", "b", "c", "todos"], default=["todos"],
+    parser.add_argument("incisos", nargs="*", choices=["a", "b", "c", "d", "todos"], default=["todos"],
                         help="Incisos a ejecutar (ej: python parte2.py a b). Por defecto: todos")
     args = parser.parse_args()
-    incisos = {"a", "b", "c"} if "todos" in args.incisos else set(args.incisos)
+    incisos = {"a", "b", "c", "d"} if "todos" in args.incisos else set(args.incisos)
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
 
     if "a" in incisos:
@@ -306,8 +364,13 @@ def main():
         for nombre, (valores, unidad) in VALORES_2B.items():
             inciso_2b_sensibilidad(nombre, valores, timestamp, unidad=unidad)
 
+    mejores = None
     if "c" in incisos:
-        inciso_2c(timestamp)
+        mejores = inciso_2c(timestamp)
+
+    if "d" in incisos:
+        # Si el 2.c ya corrio se reutiliza su resultado; si no, el 2.d lo calcula
+        inciso_2d(timestamp, mejores)
 
 
 if __name__ == "__main__":
