@@ -9,7 +9,6 @@ import itertools
 from datetime import datetime
 
 import numpy as np
-import pandas as pd
 import matplotlib.pyplot as plt
 
 from solucion_referencia import resolver_euler
@@ -209,98 +208,130 @@ def inciso_2b_sensibilidad(param_nombre, valores_param, timestamp, unidad=""):
     return valores_param, resultados_sp, resultados_dt
 
 
-# --- Inciso 2.c: busqueda de la combinacion de mayor SP ---------------------
-
-# Grilla: 5 valores equiespaciados por parametro, incluyendo los extremos de
-# los intervalos del enunciado (5**4 = 625 combinaciones).
-GRILLA_2C = {
-    "A": np.linspace(0.25, 0.60, 5),
-    "BETA": np.linspace(0.10, 0.30, 5),
-    "GAMMA": np.linspace(0.05, 0.20, 5),
-    "SIGMA": np.linspace(0.40, 1.00, 5),
+# Valores elegidos para el inciso 2.c: listas vacías para que el usuario las complete
+VALORES_2C = {
+    "A": [0.25, 0.30, 0.35, 0.40, 0.45, 0.50, 0.55, 0.60],
+    "BETA": [0.10, 0.125, 0.15, 0.175, 0.20, 0.225, 0.25, 0.275, 0.30],
+    "GAMMA": [0.05, 0.075, 0.10, 0.125, 0.15, 0.175, 0.20],
+    "SIGMA": [0.40, 0.50, 0.60, 0.70, 0.80, 0.90, 1.00],
+    "TOL_REPETITIVIDAD": 0.01  # Ajusten este valor según el margen de error deseado
 }
-LIMITE_ACOTADA = 1e3     # |T|, |H|, |P| por encima de esto: solucion no acotada
-TOL_PERIODICIDAD = 1e-2  # diferencia relativa maxima entre el ultimo ciclo y el anterior
 
 
-def es_acotada(y):
-    return bool(np.all(np.isfinite(y)) and np.max(np.abs(y)) < LIMITE_ACOTADA)
+def inciso_2c_maxima_severidad(valores_A, valores_BETA, valores_GAMMA, valores_SIGMA, tol_repetitividad):
+    """
+    Evalúa todas las combinaciones de A, BETA, GAMMA y SIGMA.
+    Filtra las que divergen o no alcanzan un régimen periódico anual al final,
+    y devuelve la lista de combinaciones válidas ordenadas por mayor SP en formato tabla.
+    """
+    # Verificamos que las listas no estén vacías antes de combinar
+    if not all([valores_A, valores_BETA, valores_GAMMA, valores_SIGMA]):
+        print("\n--- Resultados Punto 2.c (Búsqueda de máxima severidad) ---")
+        print("Aviso: Debés completar las listas de valores en VALORES_2C para ejecutar este inciso.")
+        return []
+
+    combinaciones = list(itertools.product(valores_A, valores_BETA, valores_GAMMA, valores_SIGMA))
+
+    print(f"\n--- Resultados Punto 2.c (Búsqueda de máxima severidad) ---")
+    print(f"Total de combinaciones a evaluar: {len(combinaciones)}")
+    print(f"Tolerancia para repetitividad: {tol_repetitividad}")
+
+    resultados_validos = []
+    descartadas_divergencia = 0
+    descartadas_repetitividad = 0
+
+    # Calculamos cuántos pasos de tiempo equivalen a un ciclo anual (12 meses)
+    n_pasos_por_ciclo = int(round(PERIODO / H_PARTE2))
+    LIMITE_DIVERGENCIA = 1e3
+
+    for A, BETA, GAMMA, SIGMA in combinaciones:
+        p_actual = NOMINALES.copy()
+        p_actual["A"] = A
+        p_actual["BETA"] = BETA
+        p_actual["GAMMA"] = GAMMA
+        p_actual["SIGMA"] = SIGMA
+
+        # Ignoramos warnings temporales por si alguna combinación explota numéricamente
+        with np.errstate(all='ignore'):
+            t, y = simular(p_actual)
+
+        # --- Condición 1: Solución acotada ---
+        diverge = (not np.all(np.isfinite(y))) or np.max(np.abs(y)) > LIMITE_DIVERGENCIA
+        if diverge:
+            descartadas_divergencia += 1
+            continue
+
+        # --- Condición 2: Régimen anual repetitivo ---
+        ultimo_ciclo = y[-n_pasos_por_ciclo - 1:]
+        penultimo_ciclo = y[-2 * n_pasos_por_ciclo - 1 : -n_pasos_por_ciclo]
+        error_rep = np.max(np.abs(ultimo_ciclo - penultimo_ciclo))
+
+        if error_rep > tol_repetitividad:
+            descartadas_repetitividad += 1
+            continue
+
+        # --- Cálculo de Indicadores ---
+        ind = indicadores(t, y)
+
+        resultados_validos.append({
+            "A": A, "BETA": BETA, "GAMMA": GAMMA, "SIGMA": SIGMA,
+            "SP": ind["SP"],
+            "dt_TP": ind["dt_TP"],
+            "P_max": ind["P_max"],    
+            "P_min": ind["P_min"],    
+            "P_med": ind["P_med"],  
+            "error_rep": error_rep
+        })
+
+    # Ordenamos los resultados de mayor a menor SP
+    resultados_validos.sort(key=lambda x: x["SP"], reverse=True)
+
+    # Resumen de filtrado
+    print("-" * 78)
+    print(f"Descartadas por divergir:             {descartadas_divergencia}")
+    print(f"Descartadas por no ser repetitivas:   {descartadas_repetitividad}")
+    print(f"Combinaciones válidas encontradas:    {len(resultados_validos)}")
+    print("-" * 78)
+
+    # Impresión de la tabla de resultados (las 10 mejores)
+    if resultados_validos:
+        print(f"\n{'A':>6} | {'BETA':>6} | {'GAMMA':>6} | {'SIGMA':>6} | {'SP':>8} | {'ΔtTP':>6} | "
+              f"{'Pmax':>7} | {'Pmin':>7} | {'Pmed':>7} | {'Error rep.':>10}")
+        print("-" * 98)
+        for res in resultados_validos[:10]:
+            print(f"{res['A']:6.3f} | {res['BETA']:6.3f} | {res['GAMMA']:6.3f} | {res['SIGMA']:6.3f} | "
+                  f"{res['SP']:8.4f} | {res['dt_TP']:6.2f} | {res['P_max']:7.3f} | {res['P_min']:7.3f} | "
+                  f"{res['P_med']:7.3f} | {res['error_rep']:10.2e}")
+    else:
+        print("\nNinguna combinación evaluada cumplió con las condiciones de estabilidad y repetitividad.")
+
+    return resultados_validos
 
 
-def error_periodicidad(t, y):
-    """Diferencia relativa maxima entre el ultimo ciclo (48-60) y el anterior (36-48).
-    Si el regimen ya es anual y repetitivo, ambos ciclos coinciden (error ~ 0)."""
-    paso = int(round(PERIODO / (t[1] - t[0])))
-    ultimo = y[-(paso + 1):]
-    previo = y[-(2 * paso + 1):-paso]
-    escala = np.max(np.abs(ultimo), axis=0) + 1e-12
-    return float(np.max(np.max(np.abs(ultimo - previo), axis=0) / escala))
-
-
-def inciso_2c(timestamp):
-    nombres = list(GRILLA_2C.keys())
-    combinaciones = list(itertools.product(*GRILLA_2C.values()))
-    print(f"\n--- Resultados Punto 2.c: grilla de {len(combinaciones)} combinaciones "
-          f"(h = {H_PARTE2}) ---")
-
-    filas = []
-    for combo in combinaciones:
-        p = NOMINALES.copy()
-        p.update(dict(zip(nombres, combo)))
-        with np.errstate(all="ignore"):
-            t, y = simular(p)
-        fila = dict(zip(nombres, combo))
-        fila["acotada"] = es_acotada(y)
-        if fila["acotada"]:
-            ind = indicadores(t, y)
-            fila.update(SP=ind["SP"], dt_TP=ind["dt_TP"], P_max=ind["P_max"],
-                        P_min=ind["P_min"], P_med=ind["P_med"],
-                        err_per=error_periodicidad(t, y))
-        else:
-            fila.update(SP=np.nan, dt_TP=np.nan, P_max=np.nan, P_min=np.nan,
-                        P_med=np.nan, err_per=np.nan)
-        fila["repetitiva"] = bool(fila["acotada"] and fila["err_per"] < TOL_PERIODICIDAD)
-        filas.append(fila)
-
-    df = pd.DataFrame(filas)
-    df.to_csv(f"resultados_2c_{timestamp}.csv", index=False)
-
-    n_ac = int(df["acotada"].sum())
-    n_ok = int(df["repetitiva"].sum())
-    print(f"Soluciones acotadas: {n_ac}/{len(df)} | acotadas y repetitivas: {n_ok}/{len(df)}")
-
-    validas = df[df["repetitiva"]].sort_values("SP", ascending=False)
-    if validas.empty:
-        print("Ninguna combinación cumple las condiciones.")
-        return None
-
-    print("\nTop 10 combinaciones válidas (ordenadas por SP):")
-    print(validas.head(10)[nombres + ["SP", "dt_TP", "P_max", "P_min", "P_med", "err_per"]]
-          .to_string(index=False, float_format=lambda v: f"{v:.4f}"))
-
-    mejor = validas.iloc[0]
-    print("\nMejor combinación (mayor SP con solución acotada y repetitiva):")
-    for n in nombres:
-        v = mejor[n]
-        rango = GRILLA_2C[n]
-        borde = " (extremo del intervalo)" if np.isclose(v, rango[0]) or np.isclose(v, rango[-1]) else ""
-        print(f"  {n:<6} = {v:.4f}{borde}")
-    print(f"  SP = {mejor['SP']:.4f} | ΔtTP = {mejor['dt_TP']:.2f} meses | "
-          f"Pmax = {mejor['P_max']:.3f} | Pmin = {mejor['P_min']:.3f} | Pmed = {mejor['P_med']:.3f}")
-    print(f"Resultados completos guardados en: resultados_2c_{timestamp}.csv")
-    return {n: float(mejor[n]) for n in nombres}
+def ejecutar_2c():
+    """Corre la busqueda del inciso 2.c con las listas de VALORES_2C."""
+    return inciso_2c_maxima_severidad(
+        VALORES_2C["A"],
+        VALORES_2C["BETA"],
+        VALORES_2C["GAMMA"],
+        VALORES_2C["SIGMA"],
+        VALORES_2C["TOL_REPETITIVIDAD"]
+    )
 
 
 # --- Inciso 2.d: comparacion entre el caso nominal y el de mayor severidad ---
 
-def inciso_2d(timestamp, mejores=None):
+def inciso_2d(timestamp, resultados_2c=None):
     """Compara el escenario de mayor SP (inciso 2.c) con el caso nominal.
-    Si ya se corrio el 2.c se le pasa su resultado en `mejores`; si no, se calcula."""
-    if mejores is None:
-        mejores = inciso_2c(timestamp)
-    if mejores is None:
+    `resultados_2c` es la lista (ordenada por SP) que devuelve el inciso 2.c;
+    si no se pasa, se corre la busqueda del 2.c."""
+    if resultados_2c is None:
+        resultados_2c = ejecutar_2c()
+    if not resultados_2c:
         print("No hay escenario de mayor severidad para comparar.")
         return
+    mejor = resultados_2c[0]
+    mejores = {k: mejor[k] for k in ("A", "BETA", "GAMMA", "SIGMA")}
 
     escenarios = {
         "Nominal": NOMINALES.copy(),
@@ -364,13 +395,13 @@ def main():
         for nombre, (valores, unidad) in VALORES_2B.items():
             inciso_2b_sensibilidad(nombre, valores, timestamp, unidad=unidad)
 
-    mejores = None
+    resultados_2c = None
     if "c" in incisos:
-        mejores = inciso_2c(timestamp)
+        resultados_2c = ejecutar_2c()
 
     if "d" in incisos:
         # Si el 2.c ya corrio se reutiliza su resultado; si no, el 2.d lo calcula
-        inciso_2d(timestamp, mejores)
+        inciso_2d(timestamp, resultados_2c)
 
 
 if __name__ == "__main__":
